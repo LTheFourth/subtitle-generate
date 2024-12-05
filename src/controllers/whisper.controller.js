@@ -1,4 +1,6 @@
 const whisperService = require('../services/whisper.service');
+const fs = require('fs').promises;
+const path = require('path');
 
 exports.transcribeAudio = async (req, res) => {
     try {
@@ -9,40 +11,64 @@ exports.transcribeAudio = async (req, res) => {
             });
         }
 
-        const model = req.body.model || 'base';
-        const language = req.body.language || null;
+        const language = req.body.language || 'en';
+        const modelSize = req.body.modelSize || 'medium';
 
-        const result = await whisperService.runWhisper(req.file.path, {
-            model,
-            language
+        // Run whisper transcription
+        const transcriptionResult = await whisperService.runWhisper(req.file.path, {
+            language,
+            modelSize
         });
 
+        // Generate download URL for the transcription
+        const srtFilename = path.basename(transcriptionResult.outputFile);
+        
         res.json({
             success: true,
-            data: result
+            message: 'Transcription completed successfully',
+            data: {
+                file: transcriptionResult.outputFile,
+                downloadUrl: `/api/whisper/download/${srtFilename}`
+            }
         });
+
     } catch (error) {
-        console.error('Transcription error:', error);
+        console.error('Controller error:', error);
         res.status(500).json({
             success: false,
-            error: error.message || 'Failed to transcribe audio'
+            error: error.message || 'Failed to process transcription'
         });
     }
 };
 
-exports.getTranscriptionStatus = async (req, res) => {
+exports.downloadSrt = async (req, res) => {
     try {
-        const { id } = req.params;
-        const status = await whisperService.getStatus(id);
-        
-        res.json({
-            success: true,
-            data: status
-        });
+        const filename = req.params.filename;
+        const filePath = path.join(process.cwd(), 'output', filename);
+
+        // Check if file exists
+        try {
+            await fs.access(filePath);
+        } catch (error) {
+            return res.status(404).json({
+                success: false,
+                error: 'File not found'
+            });
+        }
+
+        // Set headers for file download
+        res.setHeader('Content-Type', 'text/srt');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+        // Stream the file
+        const fileStream = fs.createReadStream(filePath);
+        fileStream.pipe(res);
+
     } catch (error) {
+        console.error('Download error:', error);
         res.status(500).json({
             success: false,
-            error: error.message
+            error: 'Failed to download file'
         });
     }
 };

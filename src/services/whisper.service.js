@@ -1,70 +1,84 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs').promises;
 
 /**
  * Run Whisper AI transcription on an audio file
  * @param {string} filename - Path to the audio file
  * @param {Object} options - Whisper options
- * @param {string} options.model - Model to use (tiny, base, small, medium, large)
+ * @param {string} options.language - Target language for transcription
+ * @param {string} options.modelSize - Whisper model size (tiny, base, small, medium, large)
  * @returns {Promise} - Returns a promise that resolves with the transcription result
  */
-exports.runWhisper = (filename, options = {}) => {
-    return new Promise((resolve, reject) => {
-        // Default to medium model if not specified
-        const { model = 'medium' } = options;
-
-        // Create output directory if it doesn't exist
+exports.runWhisper = async (filename, options = {}) => {
+    try {
+        const { language = 'en', modelSize = 'medium' } = options;
         const outputDir = path.join(process.cwd(), 'output');
-        const outputFile = path.join(outputDir, path.basename(filename, path.extname(filename)));
+        
+        // Create output directory if it doesn't exist
+        await fs.mkdir(outputDir, { recursive: true });
 
-       // Log the command being executed
-       const command = `whisper ${filename} --model ${model} --output_dir ${outputDir} --output_format srt`;
-       console.log('Executing command:', command);
+        // Path to the whisper transcribe script
+        const scriptPath = path.join(process.cwd(), 'whisper_transcribe.py');
 
-       // Spawn Whisper process with output options
-       const whisperProcess = spawn('whisper', [
-           filename,
-           '--model', model,
-           '--output_dir', outputDir,
-           '--output_format', 'srt'
-       ]);
+        // Construct whisper command arguments
+        const whisperArgs = [
+            scriptPath,
+            filename,
+            '--model', modelSize,
+            '--language', language,
+            '--output-dir', outputDir,
+            '--output-formats', 'json'
+        ];
 
-        let outputData = '';
-        let errorData = '';
+        return new Promise((resolve, reject) => {
+            console.log('Executing command:', ['python', ...whisperArgs].join(' '));
+            const whisperProcess = spawn('python', whisperArgs, {
+                stdio: ['inherit', 'pipe', 'pipe']
+            });
 
-        // Collect output data
-        whisperProcess.stdout.on('data', (data) => {
-            outputData += data;
-            console.log(`Whisper progress: ${data}`);
-        });
+            let output = '';
+            let error = '';
 
-        // Collect error data
-        whisperProcess.stderr.on('data', (data) => {
-            errorData += data;
-            console.error(`Whisper error: ${data}`);
-        });
+            whisperProcess.stdout.on('data', (data) => {
+                const message = data.toString();
+                output += message;
+                process.stdout.write(message); // This will show in real-time
+            });
 
-        // Handle process completion
-        whisperProcess.on('close', (code) => {
-            if (code !== 0) {
-                reject(new Error(`Whisper process failed with code ${code}: ${errorData}`));
-                return;
-            }
+            whisperProcess.stderr.on('data', (data) => {
+                const message = data.toString();
+                error += message;
+                process.stderr.write(message); // This will show in real-time
+            });
 
-            resolve({
-                success: true,
-                output: outputData,
-                inputFile: filename,
-                outputFiles: {
-                    srt: `${outputFile}.srt`,
-                    txt: `${outputFile}.txt`
+            whisperProcess.on('close', async (code) => {
+                try {
+                    // Clean up the audio file
+                    await fs.unlink(filename).catch(err => {
+                        console.warn('Failed to cleanup audio file:', err);
+                    });
+
+                    if (code !== 0) {
+                        console.error('Whisper process exited with code:', code);
+                        reject(new Error(`Whisper process failed: ${error}`));
+                        return;
+                    }
+
+                    // Generate output file path (same as whisper_transcribe.py generates)
+                    const outputFile = path.join(outputDir, path.basename(filename, path.extname(filename)) + '.json');
+                    resolve({
+                        success: true,
+                        outputFile,
+                        output
+                    });
+                } catch (err) {
+                    reject(err);
                 }
             });
         });
-
-        // Handle process errors
-        whisperProcess.on('error', (error) => {
-            reject(new Error(`Failed to start Whisper process: ${error.message}`));
-        });
-    });
+    } catch (error) {
+        console.error('Error in runWhisper:', error);
+        throw error;
+    }
 };

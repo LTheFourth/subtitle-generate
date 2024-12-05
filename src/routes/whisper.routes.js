@@ -40,8 +40,7 @@ router.post('/transcribe',
     whisperController.transcribeAudio
 );
 
-router.get('/status/:id',
-    whisperController.getTranscriptionStatus
-);
+// Download route for SRT files
+router.get('/download/:filename', whisperController.downloadSrt);
 
 module.exports = router;

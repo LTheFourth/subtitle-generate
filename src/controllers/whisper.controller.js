@@ -2,14 +2,18 @@ const whisperService = require('../services/whisper.service');
 const fs = require('fs').promises;
 const path = require('path');
 
-exports.transcribeAudio = async (req, res) => {
+exports.transcribeMedia = async (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({
                 success: false,
-                error: 'No audio file provided'
+                error: 'No media file provided'
             });
         }
+
+        // Check if file is audio or video
+        const isVideo = req.file.mimetype.startsWith('video/') || 
+            /\.(mp4|mkv|avi|mov|webm)$/i.test(req.file.originalname);
 
         const language = req.body.language || 'en';
         const modelSize = req.body.modelSize || 'medium';
@@ -17,7 +21,8 @@ exports.transcribeAudio = async (req, res) => {
         // Run whisper transcription
         const transcriptionResult = await whisperService.runWhisper(req.file.path, {
             language,
-            modelSize
+            modelSize,
+            isVideo
         });
 
         // Generate download URL for the transcription
@@ -28,7 +33,8 @@ exports.transcribeAudio = async (req, res) => {
             message: 'Transcription completed successfully',
             data: {
                 file: transcriptionResult.outputFile,
-                downloadUrl: `/api/whisper/download/${srtFilename}`
+                downloadUrl: `/api/whisper/download/${srtFilename}`,
+                mediaType: isVideo ? 'video' : 'audio'
             }
         });
 

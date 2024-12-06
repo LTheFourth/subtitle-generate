@@ -4,8 +4,19 @@ import os
 import torch
 import warnings
 from datetime import timedelta
+from tqdm import tqdm
+import time
+import subprocess
+import tempfile
+import sys
 
 warnings.filterwarnings("ignore", category=FutureWarning)
+
+# Set UTF-8 encoding for stdout
+if sys.platform.startswith('win'):
+    import locale
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
 
 def format_timestamp(seconds):
     """Convert seconds to SRT timestamp format"""
@@ -26,22 +37,44 @@ def create_srt_content(segments):
         srt_content.append(f"{i}\n{start_time} --> {end_time}\n{text}\n")
     return "\n".join(srt_content)
 
+def extract_audio(video_path):
+    """Extract audio from video file using ffmpeg"""
+    temp_audio = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+    try:
+        subprocess.run([
+            'ffmpeg', '-i', video_path,
+            '-vn',  # Disable video
+            '-acodec', 'pcm_s16le',  # Audio codec
+            '-ar', '16000',  # Sample rate
+            '-ac', '1',  # Mono audio
+            '-y',  # Overwrite output file
+            temp_audio.name
+        ], check=True, capture_output=True)
+        return temp_audio.name
+    except subprocess.CalledProcessError as e:
+        print(f"Error extracting audio: {e.stderr.decode()}")
+        if os.path.exists(temp_audio.name):
+            os.unlink(temp_audio.name)
+        raise
+
 def transcribe_audio(
-    audio_path, 
+    media_path, 
     model_size='base', 
     language=None, 
     output_formats=None,
-    output_dir=None
+    output_dir=None,
+    is_video=False
 ):
     """
-    Transcribe audio using Whisper
+    Transcribe audio/video using Whisper
     
     Parameters:
-    - audio_path: Path to audio file
+    - media_path: Path to audio/video file
     - model_size: Whisper model size ('tiny', 'base', 'small', 'medium', 'large')
     - language: Language code (e.g., 'en', 'ja', 'auto' for auto-detection)
     - output_formats: List of output formats ('srt', 'txt', 'vtt', 'json')
-    - output_dir: Directory to save output files (default: same as audio file)
+    - output_dir: Directory to save output files (default: same as input file)
+    - is_video: Whether the input is a video file
     """
     
     # Check for GPU
@@ -50,104 +83,110 @@ def transcribe_audio(
     if device == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(0)}")
     
-    # Validate input file
-    if not os.path.exists(audio_path):
-        raise FileNotFoundError(f"Audio file not found: {audio_path}")
-    
-    # Set default output formats
-    if output_formats is None:
-        output_formats = ['srt']
-    
-    # Set output directory
-    if output_dir is None:
-        output_dir = os.path.dirname(audio_path) or '.'
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Get base filename without extension
-    base_name = os.path.splitext(os.path.basename(audio_path))[0]
-    
-    print(f"Loading model: {model_size}")
-    model = whisper.load_model(model_size).to(device)
-    
-    # Prepare transcription options
-    options = {
-        "task": "transcribe",
-        "fp16": device == "cuda"  # Use FP16 if on GPU
-    }
-    if language and language != "auto":
-        options["language"] = language
-    
-    print("Transcribing audio...")
-    result = model.transcribe(audio_path, **options)
-    
-    # Save outputs in requested formats
-    for fmt in output_formats:
-        output_path = os.path.join(output_dir, f"{base_name}.{fmt}")
-        
-        if fmt == 'srt':
-            content = create_srt_content(result['segments'])
-        elif fmt == 'txt':
-            content = result['text']
-        elif fmt == 'vtt':
-            # Simple WebVTT format
-            content = "WEBVTT\n\n" + create_srt_content(result['segments']).replace(',', '.')
-        elif fmt == 'json':
-            import json
-            content = json.dumps(result, indent=2, ensure_ascii=False)
+    # Extract audio if input is video
+    audio_path = None
+    try:
+        if is_video:
+            print("Extracting audio from video...")
+            audio_path = extract_audio(media_path)
+            input_path = audio_path
         else:
-            print(f"Unsupported format: {fmt}")
-            continue
-            
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-        print(f"Saved {fmt.upper()} file: {output_path}")
+            input_path = media_path
+
+        # Load model
+        print(f"\nLoading model: {model_size}")
+        model = whisper.load_model(model_size).to(device)
+        
+        # Get audio duration for progress bar
+        import ffmpeg
+        try:
+            probe = ffmpeg.probe(input_path)
+            duration = float(probe['streams'][0]['duration'])
+            print(f"\nAudio duration: {timedelta(seconds=int(duration))}")
+        except:
+            duration = None
+            print("\nCouldn't determine audio duration")
+        
+        # Transcribe with progress indicator
+        print("\nTranscribing...")
+        start_time = time.time()
+        
+        options = {
+            "task": "transcribe",
+            "language": language,
+            "verbose": True,  # Enable whisper's built-in progress
+        }
+
+        result = model.transcribe(input_path, **options)
+        
+        end_time = time.time()
+        process_duration = end_time - start_time
+        
+        if duration:
+            speed_factor = duration / process_duration
+            print(f"\nProcessed at {speed_factor:.2f}x real-time speed")
+        print(f"Total processing time: {timedelta(seconds=int(process_duration))}")
+        
+        # Prepare output directory
+        if output_dir is None:
+            output_dir = os.path.dirname(media_path)
+        os.makedirs(output_dir, exist_ok=True)
+        
+        base_name = os.path.splitext(os.path.basename(media_path))[0]
+        outputs = {}
+        
+        # Save in requested formats
+        if output_formats:
+            print("\nSaving outputs...")
+            for fmt in tqdm(output_formats, desc="Saving files"):
+                output_path = os.path.join(output_dir, f"{base_name}.{fmt}")
+                
+                if fmt == 'srt':
+                    content = create_srt_content(result['segments'])
+                elif fmt == 'vtt':
+                    # Convert SRT to VTT
+                    content = "WEBVTT\n\n" + create_srt_content(result['segments']).replace(',', '.')
+                elif fmt == 'txt':
+                    content = result['text']
+                elif fmt == 'json':
+                    import json
+                    content = json.dumps(result, indent=2, ensure_ascii=False)
+                
+                # Open file with UTF-8 encoding
+                with open(output_path, 'w', encoding='utf-8', errors='ignore') as f:
+                    f.write(content)
+                outputs[fmt] = output_path
+                print(f"Saved {fmt.upper()}: {output_path}")
+        
+        # Remove temporary audio file if it was created
+        if audio_path and os.path.exists(audio_path):
+            os.unlink(audio_path)
+        
+        return outputs
     
-    return result
+    except Exception as e:
+        print(f"Error: {str(e)}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Transcribe audio using Whisper")
-    parser.add_argument("audio_path", help="Path to the audio file")
-    parser.add_argument(
-        "--model", 
-        choices=['tiny', 'base', 'small', 'medium', 'large'], 
-        default='base',
-        help="Model size to use"
-    )
-    parser.add_argument(
-        "--language", 
-        default="auto",
-        help="Language code (e.g., en, ja, zh) or 'auto' for auto-detection"
-    )
-    parser.add_argument(
-        "--output-formats", 
-        nargs='+',
-        choices=['srt', 'txt', 'vtt', 'json'],
-        default=['srt'],
-        help="Output formats to generate"
-    )
-    parser.add_argument(
-        "--output-dir",
-        help="Directory to save output files (default: same as audio file)"
-    )
+    parser = argparse.ArgumentParser(description="Transcribe audio/video using Whisper")
+    parser.add_argument("input_file", help="Path to the input audio/video file")
+    parser.add_argument("--model", default="base", help="Model size (tiny, base, small, medium, large)")
+    parser.add_argument("--language", default=None, help="Language code (e.g., en, ja, auto)")
+    parser.add_argument("--output-formats", default="srt", help="Comma-separated list of output formats")
+    parser.add_argument("--output-dir", default=None, help="Output directory")
+    parser.add_argument("--is-video", action="store_true", help="Input is a video file")
     
     args = parser.parse_args()
     
-    try:
-        result = transcribe_audio(
-            args.audio_path,
-            model_size=args.model,
-            language=args.language,
-            output_formats=args.output_formats,
-            output_dir=args.output_dir
-        )
-        
-        # Print transcription to console
-        print("\nTranscription:")
-        print("-" * 50)
-        print(result["text"])
-        
-    except Exception as e:
-        print(f"Error: {str(e)}")
+    formats = args.output_formats.split(",")
+    transcribe_audio(
+        args.input_file,
+        model_size=args.model,
+        language=args.language,
+        output_formats=formats,
+        output_dir=args.output_dir,
+        is_video=args.is_video
+    )
 
 if __name__ == "__main__":
     main()

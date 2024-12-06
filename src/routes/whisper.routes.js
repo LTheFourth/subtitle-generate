@@ -3,7 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const whisperController = require('../controllers/whisper.controller');
 
-// Configure multer for audio file uploads
+// Configure multer for media file uploads
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         cb(null, 'uploads/');
@@ -15,12 +15,15 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-    // Accept audio files
-    if (file.mimetype.startsWith('audio/') || 
-        file.originalname.match(/\.(wav|mp3|ogg|m4a|flac)$/)) {
+    // Accept audio and video files
+    if (
+        file.mimetype.startsWith('audio/') || 
+        file.mimetype.startsWith('video/') ||
+        file.originalname.match(/\.(wav|mp3|ogg|m4a|flac|mp4|mkv|avi|mov|webm)$/i)
+    ) {
         cb(null, true);
     } else {
-        cb(new Error('Only audio files are allowed!'), false);
+        cb(new Error('Only audio and video files are allowed!'), false);
     }
 };
 
@@ -28,7 +31,7 @@ const upload = multer({
     storage: storage,
     fileFilter: fileFilter,
     limits: {
-        fileSize: 50 * 1024 * 1024 // 50MB limit
+        fileSize: 500 * 1024 * 1024 // 500MB limit for video files
     }
 });
 
@@ -36,8 +39,8 @@ const router = express.Router();
 
 // Routes
 router.post('/transcribe', 
-    upload.single('audio'), 
-    whisperController.transcribeAudio
+    upload.single('media'), 
+    whisperController.transcribeMedia
 );
 
 // Download route for SRT files

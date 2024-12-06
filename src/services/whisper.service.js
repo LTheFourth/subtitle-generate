@@ -3,16 +3,17 @@ const path = require('path');
 const fs = require('fs').promises;
 
 /**
- * Run Whisper AI transcription on an audio file
- * @param {string} filename - Path to the audio file
+ * Run Whisper AI transcription on an audio or video file
+ * @param {string} filename - Path to the media file
  * @param {Object} options - Whisper options
  * @param {string} options.language - Target language for transcription
  * @param {string} options.modelSize - Whisper model size (tiny, base, small, medium, large)
+ * @param {boolean} options.isVideo - Whether the input file is a video file
  * @returns {Promise} - Returns a promise that resolves with the transcription result
  */
 exports.runWhisper = async (filename, options = {}) => {
     try {
-        const { language = 'en', modelSize = 'medium' } = options;
+        const { language = 'en', modelSize = 'medium', isVideo = false } = options;
         const outputDir = path.join(process.cwd(), 'output');
         
         // Create output directory if it doesn't exist
@@ -28,8 +29,13 @@ exports.runWhisper = async (filename, options = {}) => {
             '--model', modelSize,
             '--language', language,
             '--output-dir', outputDir,
-            '--output-formats', 'json'
+            '--output-formats', 'srt'
         ];
+
+        // Add video flag if input is video
+        if (isVideo) {
+            whisperArgs.push('--is-video');
+        }
 
         return new Promise((resolve, reject) => {
             console.log('Executing command:', ['python', ...whisperArgs].join(' '));
@@ -49,14 +55,14 @@ exports.runWhisper = async (filename, options = {}) => {
             whisperProcess.stderr.on('data', (data) => {
                 const message = data.toString();
                 error += message;
-                process.stderr.write(message); // This will show in real-time
+                process.stderr.write(message); // Show errors in real-time
             });
 
             whisperProcess.on('close', async (code) => {
                 try {
-                    // Clean up the audio file
+                    // Clean up the media file
                     await fs.unlink(filename).catch(err => {
-                        console.warn('Failed to cleanup audio file:', err);
+                        console.warn('Failed to cleanup media file:', err);
                     });
 
                     if (code !== 0) {

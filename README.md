@@ -39,6 +39,24 @@ project/
 - CUDA-compatible GPU (recommended)
 - FFmpeg (required for video processing)
 
+## Dependencies
+
+### Python Dependencies
+The following major packages are required:
+- `openai-whisper`: OpenAI's Whisper model for transcription
+- `torch`: PyTorch for deep learning operations
+- `transformers`: Hugging Face Transformers for translation
+- `ffmpeg-python`: FFmpeg Python bindings for media processing
+- `tqdm`: Progress bar functionality
+- Additional dependencies are listed in `requirements.txt`
+
+### Node.js Dependencies
+Key packages include:
+- `express`: Web framework
+- `multer`: File upload handling
+- `dotenv`: Environment variable management
+- Full list available in `package.json`
+
 ## Installation
 
 1. Install Node.js dependencies:
@@ -51,10 +69,27 @@ project/
    pip install -r requirements.txt
    ```
 
+   For GPU support (recommended):
+   ```bash
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+   ```
+
 3. Install FFmpeg (if not already installed):
-   - Windows: Download from https://ffmpeg.org/download.html
-   - Linux: `sudo apt install ffmpeg`
-   - macOS: `brew install ffmpeg`
+   - Windows: 
+     ```bash
+     # Using chocolatey
+     choco install ffmpeg
+     # Or download from https://ffmpeg.org/download.html
+     ```
+   - Linux: 
+     ```bash
+     sudo apt update
+     sudo apt install ffmpeg
+     ```
+   - macOS: 
+     ```bash
+     brew install ffmpeg
+     ```
 
 ## Usage
 
@@ -153,7 +188,3 @@ MAX_FILE_SIZE=500MB
 3. Commit your changes
 4. Push to the branch
 5. Create a new Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
